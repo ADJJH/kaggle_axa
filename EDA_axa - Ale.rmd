@@ -40,16 +40,15 @@ Creating boxplots split by driver type and response.
 ```{r}
 
 var_list = names(axa)[1:89]
-boxplot_list = list()
+boxplot_list = list("null")
 
 for (i in 2:88) {
     p = ggplot(data=axa,aes_string(x=var_list[[89]], y=var_list[[i]],
                                    fill= var_list[[88]])) + 
-          geom_boxplot()                    
-    boxplot_list[[i-1]] = p
+          geom_boxplot() + ggtitle(i)                   
+    boxplot_list[[i]] = p
     }
-
+boxplot_list
 ```
 
-blablabla
 
