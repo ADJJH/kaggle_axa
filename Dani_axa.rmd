@@ -1,0 +1,55 @@
+```{r}
+library(ggplot2)
+```
+
+```{r}
+load("Kaggle/small_axa.RData")
+
+dim(axa) #600 Observations, 88 Variables
+names(axa)
+sapply(axa, class)
+table(sapply(axa, class)) #Characters need to be converted to numeric type.
+
+sum(is.na(axa)) #3,375 missing values.
+na.list = as.data.frame(sapply(axa, function(x) { sum(is.na(x)) })) #Focused in certain variables.
+na.list$variable = rownames(na.list)
+colnames(na.list) = c("sum.na","variable")
+rownames(na.list) <- NULL
+na.list[order(na.list$sum.na, decreasing = TRUE), ]
+
+###Converting character variables to numeric variables.
+converted.columns = sapply(axa[, 2:87], as.numeric)
+axa.converted = data.frame(axa[, 1], converted.columns, axa[, 88])
+names(axa.converted) = names(axa) 
+
+axa.converted$driver = as.factor(substr(axa.converted$driver_trip, 1, 1))
+names <- names(axa.converted)
+names <- gsub("-", "_", names)
+names(axa.converted) <- names
+remove(axa)
+axa = axa.converted
+remove(axa.converted)
+```
+
+### Data Exploration 
+```{r}
+summary(axa)
+```
+
+Creating boxplots split by driver type and response.
+```{r}
+
+var_list = names(axa)[1:89]
+boxplot_list = list()
+
+for (i in 2:88) {
+    p = ggplot(data=axa,aes_string(x=var_list[[89]], y=var_list[[i]],
+                                   fill= var_list[[88]])) + 
+          geom_boxplot()                    
+    boxplot_list[[i-1]] = p
+    }
+
+```
+
+blablabla
+
