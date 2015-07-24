@@ -1,5 +1,7 @@
 ```{r}
 library(ggplot2)
+library(GGally)
+library(corrplot)
 ```
 
 ```{r}
@@ -49,6 +51,19 @@ for (i in 2:88) {
     boxplot_list[[i]] = p
     }
 boxplot_list
+
+ggpairs(data=axa[,c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85,88)], color ="isDriver" )
 ```
+
+
+Checking the correlation with variable 79 (`r  colnames(axa[79])`) and selecting the max and min correlations. 
+```{r}
+correlation_axa = cor(axa[,79] , axa[,2:87] , use = "pairwise.complete.obs")
+cor_axa_t = t(correlation_axa)
+which.min(cor_axa_t)
+which.max(cor_axa_t[-78,])
+
+```
+The variables with the highest correaltions are: `r which.min(cor_axa_t)` and `r which.min(cor_axa_t)`
 
 
