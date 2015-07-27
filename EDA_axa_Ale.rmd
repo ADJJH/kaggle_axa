@@ -98,3 +98,54 @@ which.max(cor_axa_t[-78,])
 The variables with the highest correaltions are: `r which.min(cor_axa_t)` and `rwhich.max(cor_axa_t[-78,])`
 
 
+```{r}
+model = lm(attr.hv.sd ~ accel_quantile.0., data = axa)
+
+summary(model)
+
+par(mfrow=c(2, 2))
+plot(model)
+
+library(MASS)
+bc = boxcox(model)
+which(bc$y == max(bc$y))
+bc$x[54]
+
+transformed = axa$attr.hv.sd^bc$x[54]
+model2 = lm(transformed ~ accel_quantile.0., data = axa)
+
+par(mfrow=c(2, 2))
+plot(model2)
+
+col.vec = rep(1, nrow(axa))
+col.vec[305] = "red3"
+
+plot(transformed ~ axa$accel_quantile.0., col = col.vec)
+
+acceleration = axa$accel_quantile.0.[-305]
+
+model3 = lm(transformed[-305] ~ acceleration, data = axa)
+par(mfrow=c(2, 2))
+plot(model3)
+
+summary(model3)
+
+axa.imputed = data.frame("accel_quantile.0." = axa$accel_quantile.0.,
+                         "attr.hv.sd.transformed" = transformed,
+                         "driver" = axa$driver,
+                         "isDriver" = axa$isDriver)
+
+input = axa$accel_quantile.0.[is.na(axa.imputed$attr.hv.sd.transformed)]
+
+new = data.frame(acceleration = input)
+
+imputed.values = predict(model3, newdata = new)
+
+
+
+index = which(is.na(axa.imputed$attr.hv.sd.transformed))
+
+axa.imputed[index,"attr.hv.sd.transformed"]  = imputed.values
+
+```
+
