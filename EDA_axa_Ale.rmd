@@ -95,22 +95,34 @@ which.min(cor_axa_t)
 which.max(cor_axa_t[-78,])
 
 ```
-The variables with the highest correaltions are: `r which.min(cor_axa_t)` and `rwhich.max(cor_axa_t[-78,])`
+The variables with the highest correaltions are: `r which.min(cor_axa_t)` and `rwhich.max(cor_axa_t[-78,])`. 
 
+We picked variable `r which.min(cor_axa_t)` with the highest correlation with variable 79.
 
+Using linear regression to impute the values. 
+
+First model using variable accel.quantile.0 variable to predict attr.hv.sd 
 ```{r}
 model = lm(attr.hv.sd ~ accel_quantile.0., data = axa)
-
 summary(model)
-
 par(mfrow=c(2, 2))
 plot(model)
+```
+From the fitted vs residuals values plot it can be seen that the plot shows a pattern. 
 
+Checking for transformations:
+
+```{r}
 library(MASS)
 bc = boxcox(model)
 which(bc$y == max(bc$y))
 bc$x[54]
+```
+The boxcox plot shows that we can apply a transformation to remove the pattern. 
 
+Transforming the data taking the max point of the boxcox transformation, and using it for a new model:
+
+```{r}
 transformed = axa$attr.hv.sd^bc$x[54]
 model2 = lm(transformed ~ accel_quantile.0., data = axa)
 
@@ -119,33 +131,59 @@ plot(model2)
 
 col.vec = rep(1, nrow(axa))
 col.vec[305] = "red3"
-
 plot(transformed ~ axa$accel_quantile.0., col = col.vec)
 
+```
+From model2, a leverage point (observation 305) is analyzed.
+
+In the following model the levarage point is removed from the imputing model.
+
+
+```{r}
 acceleration = axa$accel_quantile.0.[-305]
+
 
 model3 = lm(transformed[-305] ~ acceleration, data = axa)
 par(mfrow=c(2, 2))
 plot(model3)
 
 summary(model3)
+```
+The R-squared value after removing the levarage improved from `r summary(model2)$adj.r.squared` to `r summary(model3)$adj.r.squared`
 
-axa.imputed = data.frame("accel_quantile.0." = axa$accel_quantile.0.,
-                         "attr.hv.sd.transformed" = transformed,
-                         "driver" = axa$driver,
-                         "isDriver" = axa$isDriver)
+Model3 is now used to impute the missing values.
 
-input = axa$accel_quantile.0.[is.na(axa.imputed$attr.hv.sd.transformed)]
+```{r}
+input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values with attr.hv.sd = NA. 
 
-new = data.frame(acceleration = input)
+index = which(is.na(axa$attr.hv.sd)) 
+imputed.values = predict(model3,  newdata = data.frame(acceleration=input))
 
-imputed.values = predict(model3, newdata = new)
+axa$attr.hv.sd.imputed = axa$attr.hv.sd
+axa[index,"attr.hv.sd.imputed"]  = imputed.values
+```
 
 
+``` {r}
 
-index = which(is.na(axa.imputed$attr.hv.sd.transformed))
+###previous code
 
-axa.imputed[index,"attr.hv.sd.transformed"]  = imputed.values
+# axa.imputed = data.frame("accel_quantile.0." = axa$accel_quantile.0.,
+#                          "attr.hv.sd.transformed" = transformed,
+#                          "driver" = axa$driver,
+#                          "isDriver" = axa$isDriver)
+# 
+# input = axa$accel_quantile.0.[is.na(axa.imputed$attr.hv.sd.transformed)]
+# 
+# new = data.frame(acceleration = input)
+# 
+# imputed.values = predict(model3, newdata = new)
+# 
+# 
+# 
+# index = which(is.na(axa.imputed$attr.hv.sd.transformed))
+# 
+# axa.imputed[index,"attr.hv.sd.transformed"]  = imputed.values
 
 ```
 
