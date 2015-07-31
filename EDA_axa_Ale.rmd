@@ -74,6 +74,7 @@ for (i in 2:88) {
 boxplot_list [[79]]
 ```
 
+
 Creating plot
 ```{r, eval = FALSE} 
 #change eval = TRUE to create this plot. It requires a lot of computation.
@@ -108,7 +109,7 @@ summary(model)
 par(mfrow=c(2, 2))
 plot(model)
 ```
-From the fitted vs residuals values plot it can be seen that the plot shows a pattern. 
+From the "fitted vs residuals values"" plot a pattern is observed. 
 
 Checking for transformations:
 
@@ -120,7 +121,7 @@ bc$x[54]
 ```
 The boxcox plot shows that we can apply a transformation to remove the pattern. 
 
-Transforming the data taking the max point of the boxcox transformation, and using it for a new model:
+Transforming the data by taking the max point of the boxcox transformation, and using it in a new imputing model:
 
 ```{r}
 transformed = axa$attr.hv.sd^bc$x[54]
@@ -137,11 +138,8 @@ plot(transformed ~ axa$accel_quantile.0., col = col.vec)
 From model2, a leverage point (observation 305) is analyzed.
 
 In the following model the levarage point is removed from the imputing model.
-
-
 ```{r}
 acceleration = axa$accel_quantile.0.[-305]
-
 
 model3 = lm(transformed[-305] ~ acceleration, data = axa)
 par(mfrow=c(2, 2))
@@ -154,7 +152,8 @@ The R-squared value after removing the levarage improved from `r summary(model2)
 Model3 is now used to impute the missing values.
 
 ```{r}
-input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values with attr.hv.sd = NA. 
+input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values 
+#with attr.hv.sd = NA. 
 
 index = which(is.na(axa$attr.hv.sd)) 
 imputed.values = predict(model3,  newdata = data.frame(acceleration=input))
@@ -163,27 +162,67 @@ axa$attr.hv.sd.imputed = axa$attr.hv.sd
 axa[index,"attr.hv.sd.imputed"]  = imputed.values
 ```
 
+```{r}
+library (ggplot2)
+library(rpart)
+library(rattle)
 
-``` {r}
+axa = axa[,-c(1,74:79,90)]
+set.seed(345)
+index_axa = sample (1:nrow(axa),round(nrow(axa)*.8),replace = FALSE)
+axa.train = axa[index_axa,]
+axa.test = axa[-index_axa,]
 
-###previous code
-
-# axa.imputed = data.frame("accel_quantile.0." = axa$accel_quantile.0.,
-#                          "attr.hv.sd.transformed" = transformed,
-#                          "driver" = axa$driver,
-#                          "isDriver" = axa$isDriver)
-# 
-# input = axa$accel_quantile.0.[is.na(axa.imputed$attr.hv.sd.transformed)]
-# 
-# new = data.frame(acceleration = input)
-# 
-# imputed.values = predict(model3, newdata = new)
-# 
-# 
-# 
-# index = which(is.na(axa.imputed$attr.hv.sd.transformed))
-# 
-# axa.imputed[index,"attr.hv.sd.transformed"]  = imputed.values
+model_rtree = rpart (isDriver ~ .,data=axa)
+fancyRpartPlot(model_rtree)
+#model_forest = randomForest(quality ~ .,data=wine.train, ntree= 500)
 
 ```
+
+
+```{r}
+library(VIM)
+library (caret)
+library(pROC)
+axa.new = axa[, -c(1, 74:79, 90)]
+axa.knn = kNN(axa.new)
+axa.imputed = axa.knn[, 1:82]
+axa.imputed$isDriver = as.factor(axa.imputed$isDriver)
+
+set.seed(998)
+inTraining <- createDataPartition(axa.imputed$isDriver, p = .75, list = FALSE)
+training <- axa.imputed[ inTraining,]
+testing  <- axa.imputed[-inTraining,]
+
+
+rf_model<-train(isDriver ~ . ,
+                data=training,
+                method="rf",
+                trControl=trainControl(method="cv",number=5))
+#,
+                #metric = "ROC")
+print(rf_model)
+#
+
+rf.model2 <-randomForest(isDriver ~.,data= training, mtry=2, ntree=100, 
+     keep.forest=TRUE, importance=TRUE,test=testing)
+
+
+predicted.prob <- predict(rf.model2,testing, type="prob") # Prediction
+colnames(predicted.prob) <- c("not_driver","driver")
+
+result.roc <- roc(testing$isDriver, predicted.prob$driver) # Draw ROC curve.
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft")
+
+result.coords <- coords(result.roc, "best", best.method="closest.topleft", ret=c("threshold", "accuracy"))
+print(result.coords)#to get threshold and accuracy
+
+```
+
+
+
+
+
+
+
 
