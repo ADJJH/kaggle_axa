@@ -1,0 +1,418 @@
+---
+title: "Kaggle Axa Project"
+author: "Alejandra Jaimes, Alex Signal, Christopher Peter Makris, Dani Ismail"
+date: "July 2015"
+output:
+  pdf_document: default
+  html_document:
+    number_sections: yes
+---
+
+
+
+```{r echo=TRUE, results="hide", message=FALSE, warning = FALSE}
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(stats)
+library(VIM)
+library(AUCRF)
+library(rpart)
+```
+
+### Data & feature selection 
+The features that are used for this model were taken from xxxxx. 
+For more information you can read: [linked phrase](http://example.com)
+
+###Loading Data
+```{r}
+load("Data/small_axa.RData")
+```
+
+### Data preparation
+Preparing data frame by converting variables to numeric. 
+```{r, results = "hide"}
+dim(axa) #600 Observations, 88 Variables
+names(axa)
+sapply(axa, class)
+table(sapply(axa, class)) #Characters need to be converted to numeric type.
+```
+
+```{r, results = "hide"}
+###Converting character variables to numeric variables.
+converted.columns = sapply(axa[, 2:87], as.numeric)
+axa.converted = data.frame(axa[, 1], converted.columns, axa[, 88])
+names(axa.converted) = names(axa) 
+
+axa.converted$driver = as.factor(substr(axa.converted$driver_trip, 1, 1))
+names <- names(axa.converted)
+names <- gsub("-", "_", names)
+names(axa.converted) <- names
+remove(axa)
+axa = axa.converted
+remove(axa.converted)
+```
+
+### Data Exploration
+
+```{r}
+summary(axa)
+```
+
+
+Checking for NA values. 
+```{r, results = "hide"}
+sum(is.na(axa)) #3,375 missing values.
+na.list = as.data.frame(sapply(axa, function(x) { sum(is.na(x)) })) #Focused in certain variables.
+na.list$variable = rownames(na.list)
+colnames(na.list) = c("sum.na","variable")
+rownames(na.list) <- NULL
+na.list[order(na.list$sum.na, decreasing = TRUE), ]
+```
+
+
+Creating boxplots split by driver type and response.
+```{r}
+
+var_list = names(axa)[1:89]
+boxplot_list = list("null")
+
+for (i in 2:88) {
+    p = ggplot(data=axa,aes_string(x=var_list[[89]], y=var_list[[i]],
+                                   fill= var_list[[88]])) + 
+          geom_boxplot() + ggtitle(i)                   
+    boxplot_list[[i]] = p
+    }
+boxplot_list [[79]]
+```
+
+Creating scatter plot matrix 
+```{r, eval = FALSE} 
+#change eval = TRUE to create this plot. It requires a lot of computation.
+axa2 = axa
+axa2$isDriver = as.factor(axa2$isDriver)
+ggpairs(data=axa2[,c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85,88)], color ="isDriver" )
+```
+
+
+From the boxplots, variable `r  colnames(axa[79])` shows high variances when comparing different drivers and the reponse. 
+
+However this variable has 552/600 empty values. Since we consider this can be a variable that could predict the reponse. We decided to impute ths variable and check if we can use it in our model. 
+
+Checking the correlation with variable 79 (`r  colnames(axa[79])`) and selecting the max and min correlations. 
+```{r}
+correlation_axa = cor(axa[,79] , axa[,2:87] , use = "pairwise.complete.obs")
+cor_axa_t = t(correlation_axa)
+which.min(cor_axa_t)
+which.max(cor_axa_t[-78,])
+
+```
+The variables with the highest correlations are: `r  row.names(cor_axa_t)[which.min(cor_axa_t)]` and `r row.names(cor_axa_t)[which.max(cor_axa_t[-78,])]`. 
+
+We picked variable `r row.names(cor_axa_t)[which.min(cor_axa_t)]` with the highest correlation with variable 79.
+
+### Data transformation - Imputing variable
+Using linear regression to impute the values. 
+
+First model using variable accel.quantile.0 variable to predict attr.hv.sd 
+```{r}
+model = lm(attr.hv.sd ~ accel_quantile.0., data = axa)
+summary(model)
+par(mfrow=c(2, 2))
+plot(model)
+```
+From the "fitted vs residuals values"" plot a pattern is observed. 
+
+Checking for transformations:
+
+```{r}
+library(MASS)
+bc = boxcox(model)
+which(bc$y == max(bc$y))
+bc$x[54]
+```
+The boxcox plot shows that we can apply a transformation to remove the pattern. 
+
+Transforming the data by taking the max point of the boxcox transformation, and using it in a new imputing model:
+
+```{r}
+transformed = axa$attr.hv.sd^bc$x[54]
+model2 = lm(transformed ~ accel_quantile.0., data = axa)
+
+par(mfrow=c(2, 2))
+plot(model2)
+
+col.vec = rep(1, nrow(axa))
+col.vec[305] = "red3"
+plot(transformed ~ axa$accel_quantile.0., col = col.vec)
+
+```
+From model2, a leverage point (observation 305) is analyzed.
+
+In the following model the levarage point is removed.
+```{r}
+acceleration = axa$accel_quantile.0.[-305]
+
+model3 = lm(transformed[-305] ~ acceleration, data = axa)
+par(mfrow=c(2, 2))
+plot(model3)
+
+summary(model3)
+```
+The R-squared value after removing the levarage improved from `r summary(model2)$adj.r.squared` to `r summary(model3)$adj.r.squared`
+
+Model3 is now used to impute the missing values.
+
+```{r}
+input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values 
+#with attr.hv.sd = NA. 
+
+index = which(is.na(axa$attr.hv.sd)) #keeping the index of NA rows
+imputed.values = predict(model3,  newdata = data.frame(acceleration=input))
+
+axa$attr.hv.sd.imputed = transformed
+axa[index,"attr.hv.sd.imputed"]  = imputed.values
+
+
+```
+
+After we imputed, it smoothed out all the differences since we had to impute about 90% of the variable. As shown below, "driver" ended up not being significant:
+
+
+```{r}
+
+ggplot(data=axa,aes(x=driver, y= attr.hv.sd.imputed,
+            fill= isDriver)) + 
+            geom_boxplot() + 
+            ggtitle("Boxplot of imputed variable: attr.hv.sd.imputed")
+
+aov_prior = aov(axa$attr.hv.sd ~ axa$driver + axa$isDriver)
+summary(aov_prior)
+
+aov_post = aov(axa$attr.hv.sd.imputed ~ axa$driver + axa$isDriver)
+summary(aov_post)
+
+```
+
+### Machine Learning
+
+#### Regression model using imputed variable
+
+Testing a model using the imputed variable:
+
+!!! review - Chris I dont know if this is similar to the model you tried. I couldnt find it in your code
+
+```{r}
+model_lm = glm(as.factor(isDriver) ~ attr.hv.sd.imputed,
+               data = axa, 
+               family = "binomial")
+model_lm
+pred <- ifelse(predict(model_lm,type="response") > 0.5,"TRUE","FALSE")
+table(pred,as.factor(axa$isDriver)) 
+
+# pred   FALSE TRUE
+#   TRUE   165  435
+
+```
+
+The table above shows that all "False" are missclassified.
+
+#### Random Forests
+
+##### Imputing and cleaning data
+
+Because using variable 79, could not help to predict isDriver, then variables with more than 550 NA cells will be removed. Variables with small number of missing values are imputed using knn.
+
+```{r}
+
+axa.new = axa[, -c(1, 74:79, 90)]
+axa.knn = kNN(axa.new)
+axa.imputed = axa.knn[, 1:82]
+```
+
+Converting isDriver to factor( False = 0, True =1 ) to be used in AUC
+```{r}
+axa.imputed$isDriver = as.factor(axa.imputed$isDriver)
+levels(axa.imputed$isDriver) = c(0,1)
+```
+
+####Building Random Forest
+
+For this model, the package AUCRF is used. "AUCRF is an algorithm for variable selection using Random Forest based on optimizing the areaunder-the
+ROC curve (AUC) of the Random Forest." (https://cran.r-project.org/web/packages/AUCRF/AUCRF.pdf)
+
+For these models Gini is the importance of measure for ranking the variables.
+
+##### 1.1) RF using "driver" variable 
+```{r, eval = FALSE}
+
+set.seed(12345) 
+fit = AUCRF(isDriver ~ .,
+            ntree = 1000,
+            data = axa.imputed) #.8837
+
+saveRDS(fit,"Models/fit.rds")
+```
+
+```{r}
+fit = readRDS("Models/fit.rds")
+summary(fit)
+plot(fit)
+```
+
+Using cross-validation and random forest:
+```{r, eval = FALSE}
+fit.cv = AUCRFcv(fit,
+                 nCV = 10, ###Number of folds.
+                 M = 10) ###Number of CV repetitions.
+saveRDS(fit.cv,"Models/fit.cv.rds")
+```
+
+```{r}
+fit.cv = readRDS("Models/fit.cv.rds")
+summary(fit.cv)
+plot(fit.cv)
+names(fit.cv)
+
+# Number of selected variables: Kopt= 15 
+# AUC of selected variables: OOB-AUCopt= 0.8902264 
+# AUC from cross validation: 0.8520655 
+# Importance Measure: MDG 
+```
+
+The mean AUC from cross-validation is: `r fit.cv$cvAUC` with `r fit.cv$Kopt` selected optimal variables
+ 
+The optimal variables to use are: 
+`r names(fit.cv$ranking[1:15])`
+
+##### 1.2) RF using "driver" variable and changing node size 
+```{r, eval = FALSE}
+
+set.seed(12345) 
+fit_nodesize = AUCRF(isDriver ~ .,
+            ntree = 1000,
+            nodesize = 6,
+            data = axa.imputed) #.8809
+
+saveRDS(fit_nodesize,"Models/fit_nodesize.rds")
+```
+
+```{r}
+fit_nodesize = readRDS("Models/fit_nodesize.rds")
+summary(fit_nodesize) # auc = 0.88
+plot(fit_nodesize) # 11
+```
+
+The AUC using the selected variables is `r fit_nodesize$"OOB-AUCopt" ` and `r fit_nodesize$Kopt ` are total number of optimal predictors. Increasing the node size helps to improve the model performance as it reduces the number of features. 
+
+Cross-validation using the fit_nodesize model:
+```{r, eval = FALSE}
+fit.cv.nodesize = AUCRFcv(fit_nodesize,
+                 nCV = 10, ###Number of folds.
+                 M = 10) ###Number of CV repetitions.
+saveRDS(fit.cv.nodesize,"Models/fit.cv.nodesize.rds")
+```
+
+```{r}
+fit.cv.nodesize = readRDS("Models/fit.cv.nodesize.rds")
+summary(fit.cv.nodesize) # auc =0.857, 11 kopt
+plot(fit.cv.nodesize)
+names(fit.cv.nodesize)
+```
+
+The mean AUC from cross-validation is: `r fit.cv.nodesize$cvAUC` with `r fit.cv.nodesize$Kopt` selected optimal variables.
+ 
+The optimal variables to use are : 
+`r fit.cv.nodesize$ranking[1:11]`
+
+###### Building Classification Tree
+
+With the selected variables from 1.1, a CART is built:
+```{r}
+
+
+final.model = rpart(isDriver ~ jerk_quantile.25. +
+                      jerk_quantile.75. +
+                      direct_dist +
+                      attr.turn.ap.sd +
+                      attr.turn.v.sd +
+                      attr.turn.al.sd +
+                      max.ap. +
+                      attr.turn.ap.mean +
+                      accel_sd +
+                      accel_quantile.25. +
+                      speed_sd +
+                      accel_quantile.75. +
+                      driver +
+                      jerk_sd +
+                      path_efficiency,
+                    data = axa.imputed,
+                    control = rpart.control(minbucket = 1))
+
+final.model
+
+```
+
+With the selected variables from 1.2, a CART is built:
+```{r}
+
+final.model_nodesize = rpart(isDriver ~ jerk_quantile.25. +
+                      jerk_quantile.75. +
+                      direct_dist +
+                      attr.turn.ap.sd +
+                      attr.turn.v.sd +
+                      attr.turn.al.sd +
+                      max.ap. +
+                      attr.turn.ap.mean +
+                      accel_sd +
+                      accel_quantile.25. +
+                      driver ,
+                    data = axa.imputed,
+                    control = rpart.control(minbucket = 1))
+
+final.model_nodesize
+
+```
+
+
+##### ** 2) RF "driver" variable excluded **  
+Testing the AUC if driver variable is not used, so the model can be used with new drivers.
+
+```{r, eval = FALSE}
+set.seed(12345) 
+fit_wo_driver_nodesize= AUCRF(isDriver ~ .,
+            ntree = 1000,
+            data = axa.imputed[-82],
+            nodesize = 7) #AUC 0.83 - 15Kopt, 
+
+saveRDS(fit_wo_driver_nodesize,"Models/fit_wo_driver_nodesize.rds")
+```
+
+```{r}
+fit_wo_driver_nodesize = readRDS("Models/fit_wo_driver_nodesize.rds")
+summary(fit_wo_driver_nodesize) 
+plot(fit_wo_driver_nodesize)
+```
+
+The mean AUC from cross-validation is: `r fit_wo_driver_nodesize$"OOB-AUCopt" ` with `r fit_wo_driver_nodesize$Kopt` selected optimal variables. Removing the drive decreases the AUC in around 5 percentual points compared to the model including "driver".
+
+Using cross-validation using the model 'fit_wo_driver_nodesize':
+
+```{r,eval = FALSE}
+fit.cv_wo_driver_nodesize = AUCRFcv(fit_wo_driver_nodesize,
+                 nCV = 10, ###Number of folds.
+                 M = 10) ###Number of CV repetitions.
+saveRDS(fit.cv_wo_driver_nodesize,"Models/fit.cv_wo_driver_nodesize.rds")
+```
+
+```{r}
+fit.cv_wo_driver_nodesize = readRDS("Models/fit.cv_wo_driver_nodesize.rds")
+summary(fit.cv_wo_driver_nodesize) #mean cvAUC  = 0.80
+plot(fit.cv_wo_driver_nodesize)
+names(fit.cv_wo_driver_nodesize)
+```
+
+Using cross validation the mean AUC is:`r fit.cv_wo_driver_nodesize$cvAUC`  with `fit.cv_wo_driver_nodesize$Kopt` features.
+
+### Conclusions and future work
+
