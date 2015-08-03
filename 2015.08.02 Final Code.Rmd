@@ -1,0 +1,634 @@
+---
+title: "Kaggle Axa Project"
+author: "Alejandra Jaimes, Alex Singal, Christopher Peter Makris, Dani Ismail"
+date: "July 2015"
+output:
+pdf_document: default
+html_document:
+number_sections: yes
+---
+
+
+```{r echo=TRUE, results="hide", message=FALSE, warning = FALSE}
+library(ggplot2)
+library(GGally)
+library(MASS)
+library(VIM)
+library(AUCRF)
+library(rpart)
+library(mclust)
+```
+
+
+###Data & Feature Selection
+
+The original features that are used for this model are taken from the [Driver Telematics Analysis](https://www.kaggle.com/c/axa-driver-telematics-analysis) competition from Kaggle. For the scope of this project, we use a manipulated subset of this data.
+
+
+###Loading Data
+
+```{r}
+load("Data/small_axa.RData")
+```
+
+
+###Data Preparation
+
+We begin by assessing the structure of our data. Note that there are 57 variables that are coded as the "character" type and must be converted to the "numeric" type:
+
+```{r, results = "hide"}
+dim(axa) #600 observations, 88 variables.
+names(axa) #Viewing the variable names.
+sapply(axa, class) #Viewing the variable class types by variable.
+table(sapply(axa, class)) #Viewing the variable class types by class types.
+```
+
+The variables of "character" type are first converted to numeric, then variable names are normalized to ensure they do not contain special characters:
+
+```{r, results = "hide"}
+###Converting character variables to numeric variables.
+converted.columns = sapply(axa[, 2:87], as.numeric)
+axa.converted = data.frame(axa[, 1], converted.columns, axa[, 88])
+names(axa.converted) = names(axa) 
+
+###Renaming variable names.
+axa.converted$driver = as.factor(substr(axa.converted$driver_trip, 1, 1))
+names = names(axa.converted)
+names = gsub("-", "_", names)
+names(axa.converted) = names
+
+###Cleaning up the R environment and leaving only one data frame.
+remove(axa)
+axa = axa.converted
+remove(axa.converted)
+```
+
+
+###Numerical Data Exploration
+
+Viewing the summary information for each variable in our dataset; note that most variables contain NA values:
+
+```{r}
+summary(axa)
+```
+
+Looking further into the missingness within the dataset:
+
+```{r, results = "hide"}
+sum(is.na(axa)) #3,375 missing values.
+na.list = as.data.frame(sapply(axa, function(x) { sum(is.na(x)) })) #Focused in certain variables.
+na.list$variable = rownames(na.list)
+colnames(na.list) = c("sum.na", "variable")
+rownames(na.list) = NULL
+na.list[order(na.list$sum.na, decreasing = TRUE), ] #Each variable ranked by their missing values.
+```
+
+
+###Graphical Data Exploration
+
+Creating boxplots split by driver type and response; note, the 79th variable `attr.hv.sd` displays interesting separation among the driver type and response:
+
+```{r}
+var_list = names(axa)[1:89]
+boxplot_list = list("null")
+
+for (i in 2:88) {
+  p = ggplot(data = axa, aes_string(x = var_list[[89]],
+                                    y = var_list[[i]],
+                                    fill = var_list[[88]])) + 
+    geom_boxplot() + ggtitle(i)                   
+  boxplot_list[[i]] = p
+}
+boxplot_list[[79]]
+```
+
+Creating a bivariate scatterplot matrix:
+
+```{r, eval = FALSE} 
+#change eval = TRUE to create this plot. It requires a lot of computation.
+axa2 = axa
+axa2$isDriver = as.factor(axa2$isDriver)
+ggpairs(data = axa2[ , c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85,88)], color ="isDriver" )
+```
+
+From the boxplots, variable `attr.hv.sd` shows high group separation when comparing different drivers and the reponse.
+
+However this variable has a total of 552 missing values, accounting for 92% of the variable information. Since we consider this might be a valuable variable for predicting the reponse, we decided to impute and check to see if we can use it in our model.
+
+Checking the correlation with variable 79 (`attr.hv.sd`) and selecting the maximum and mininum correlations:
+
+```{r}
+correlation_axa = cor(axa[ , 79] , axa[ , 2:87] , use = "pairwise.complete.obs")
+cor_axa_t = t(correlation_axa)
+which.min(cor_axa_t)
+which.max(cor_axa_t[-78, ])
+```
+
+The variables with the highest correlations are: `accel_quantile.0.` and `accel_quantile.100.`. 
+
+We picked variable `accel_quantile.0.` as it displays the highest absolute value correlation with the variable `attr.hv.sd`; the correlation is quite strong at approximately '-0.814'.
+
+
+###Data Transformation - Imputing Missing Values
+
+Using linear regression to impute the values in `attr.hv.sd` by using `accel_quantile.0.` as the sole predictor:
+
+```{r}
+model = lm(attr.hv.sd ~ accel_quantile.0., data = axa)
+summary(model) #Viewing the summary information for the model.
+
+par(mfrow = c(2, 2)) #Viewing visual diagnostics for the model.
+plot(model)
+```
+
+A pattern is observed in the "Residuals vs Fitted" plot; thus we must consider transforming our variables:
+
+```{r}
+par(mfrow = c(1, 1))
+bc = boxcox(model)
+which(bc$y == max(bc$y))
+bc$x[54]
+```
+
+The Box-Cox plot shows that we can apply a transformation to remove the pattern. 
+
+Transforming the data with the optimal lambda value as dictated by the Box-Cox method, and then using the new variable for the linear regression:
+
+```{r}
+transformed = axa$attr.hv.sd^bc$x[54]
+model2 = lm(transformed ~ accel_quantile.0., data = axa)
+summary(model2) #Viewing the summary information for the model.
+
+par(mfrow = c(2, 2)) #Viewing visual diagnostics for the model.
+plot(model2)
+```
+
+From this new model, we notice that there is a heavy leverage point (observation 305). We inspect this observation more closely.
+
+```{r}
+par(mfrow = c(1, 1))
+col.vec = rep(1, nrow(axa))
+col.vec[305] = "red3"
+plot(transformed ~ axa$accel_quantile.0., col = col.vec, pch = 16)
+```
+
+We decide to move forward without this observation and refit the model:
+
+```{r}
+acceleration = axa$accel_quantile.0.[-305] #Removing the leverage point from our predictor variable.
+model3 = lm(transformed[-305] ~ acceleration, data = axa) #Removing the leverage point from our dependent variable.
+summary(model3) #Viewing the summary information for the model.
+
+par(mfrow = c(2, 2)) #Viewing visual diagnostics for the model.
+plot(model3)
+```
+
+The R-squared value after removing the levarage improved from approximately `0.625` to approximately `0.758`. We also observe no violated assumptions within our diagnostic plots in this third model.
+
+We move forward with imputing the missing values with this third model:
+
+```{r}
+input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values with attr.hv.sd = NA. 
+
+index = which(is.na(axa$attr.hv.sd)) #Keeping the index of NA rows.
+imputed.values = predict(model3,  newdata = data.frame(acceleration = input))
+
+axa$attr.hv.sd.imputed = transformed
+axa[index,"attr.hv.sd.imputed"]  = imputed.values
+```
+
+The imputation ended up smoothing out the variability originally observed in the `attr.hv.sd` variable; 92% of the variable was imputed. As shown below, "driver" ended up not being a significant differentiating factor when in respect to this newly imputed variable:
+
+```{r}
+ggplot(data = axa, aes(x = driver,
+                       y = attr.hv.sd.imputed,
+                       fill = isDriver)) + 
+  geom_boxplot() + 
+  ggtitle("Boxplot of Imputed Variable: attr.hv.sd.imputed")
+
+aov_prior = aov(axa$attr.hv.sd ~ axa$driver + axa$isDriver)
+summary(aov_prior) #Significant predictor before imputation.
+
+aov_post = aov(axa$attr.hv.sd.imputed ~ axa$driver + axa$isDriver)
+summary(aov_post) #Insignificant predictor after imputation.
+```
+
+
+###Machine Learning
+
+
+####Logistic Regression using the Imputed Variable.
+
+Although the imputation appears to have smoothed out the initial differentiating factors visible in the `attr.hv.sd` variable, we test its efficacy with the results of a logistic regression:
+
+```{r}
+model_glm = glm(as.factor(isDriver) ~ attr.hv.sd.imputed,
+                data = axa, 
+                family = "binomial")
+summary(model_glm) #Insignificant model.
+
+pred = ifelse(predict(model_glm, type = "response") > 0.5, "TRUE", "FALSE")
+table(pred, as.factor(axa$isDriver)) #All observations classified as "TRUE".
+```
+
+Notice that this model predicts all observations to be of the "TRUE" category; this model is insufficient, as all 165 "FALSE" observations are missclassified. We must consider other machine learning options.
+
+
+####Random Forests
+
+
+#####Imputing & Cleaning Data
+
+Ultimately, using the imputed `attr.hv.sd` varaible was not helpful in predicting our outcome variable `isDriver`. We decide to move forward by removing variables containing more than 550 missing values from our analysis. Of the remaining variables, missingness is sparce (at most 6 observations per variable); thus, we decide to use K-Nearest Neighbors to impute the missing values within our dataset:
+
+```{r}
+axa.new = axa[, -c(1, 74:79, 90)] #Dropping the unwanted variables.
+axa.knn = kNN(axa.new) #Imputing the missing values using the default kNN procedure.
+axa.imputed = axa.knn[, 1:82] #Saving only the imputed variables.
+```
+
+In order to use the appropriate Random Forests functions, we must first convert the `isDriver` variable to a binary factor where "FALSE" = 0 and "TRUE" = 1; this is necessary to implement AUC functionality.
+
+```{r}
+axa.imputed$isDriver = as.factor(axa.imputed$isDriver)
+levels(axa.imputed$isDriver) = c(0, 1) #Converting to a classical binary factor rather than a logical value.
+```
+
+
+####Building the Random Forests
+
+For this model, the package [AUCRF](https://cran.r-project.org/web/packages/AUCRF/AUCRF.pdf) is used. "AUCRF is an algorithm for variable selection using Random Forest based on optimizing the area-under-the ROC curve (AUC) of the Random Forest."
+
+For these models, the mean decrease in the gini impurity (MDG) is used as the importance measure for ranking the variables to be considered for our models.
+
+
+#####1.1) Random Forests Using the "driver" Variable.
+
+```{r, eval = FALSE}
+set.seed(12345) 
+fit = AUCRF(isDriver ~ .,
+            ntree = 1000, #Generating 1,000 trees in this Random Forest.
+            data = axa.imputed)
+
+saveRDS(fit,"Models/fit.rds")
+
+summary(fit)
+par(mfrow = c(1, 1))
+plot(fit) #Yields an optimal AUC of 0.8837 with 15 variables.
+
+#Number of selected variables: Kopt= 15 
+#AUC of selected variables: OOB-AUCopt= 0.8836782 
+#Importance Measure: MDG 
+```
+
+Next we use cross-validation alongside the aforementioned Random Forest methodology in order to avoid over-fitting to our data:
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit.cv = AUCRFcv(fit,
+                 nCV = 10, ###Number of folds.
+                 M = 10) ###Number of CV repetitions.
+
+saveRDS(fit.cv,"Models/fit.cv.rds")
+fit.cv = readRDS("Models/fit.cv.rds")
+
+summary(fit.cv)
+plot(fit.cv)
+names(fit.cv)
+
+#Number of selected variables: Kopt= 15 
+#AUC of selected variables: OOB-AUCopt= 0.8836782 
+#AUC from cross validation: 0.8563156 
+#Importance Measure: MDG
+```
+
+The mean AUC from cross-validation is: `0.856` with `15` selected optimal variables.
+
+The optimal variables to use (in order of importance) are: `jerk_quantile.25.`, `jerk_quantile.75.`, `direct_dist`, `attr.turn.v.sd`, `attr.turn.ap.sd`, `attr.turn.al.sd`, `attr.turn.ap.mean`, `max.ap.`, `accel_sd`, `accel_quantile.25.`, `accel_quantile.75.`, `speed_sd`, `len`, `driver`, and `path_efficiency`.
+
+
+#####1.2) Random Forests Using the "driver" Variable & Limiting Node Size.
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit_nodesize = AUCRF(isDriver ~ .,
+                     ntree = 1000, #Generating 1,000 trees in this Random Forest.
+                     nodesize = 6, #Setting the minimum size of the terminal nodes.
+                     data = axa.imputed) #.8809
+
+saveRDS(fit_nodesize,"Models/fit_nodesize.rds")
+fit_nodesize = readRDS("Models/fit_nodesize.rds")
+
+summary(fit_nodesize)
+plot(fit_nodesize)
+names(fit_nodesize)
+
+#Number of selected variables: Kopt= 11 
+#AUC of selected variables: OOB-AUCopt= 0.8809265 
+#Importance Measure: MDG 
+```
+
+The AUC using the selected variables is `0.881` with a total of `11` predictors. Increasing the node size helps to improve the model performance as it reduces the number of features, therefore decreasing the complexity of our model.
+
+We proceed with cross-validation using the modified node size model:
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit.cv.nodesize = AUCRFcv(fit_nodesize,
+                          nCV = 10, ###Number of folds.
+                          M = 10) ###Number of CV repetitions.
+
+saveRDS(fit.cv.nodesize,"Models/fit.cv.nodesize.rds")
+fit.cv.nodesize = readRDS("Models/fit.cv.nodesize.rds")
+
+summary(fit.cv.nodesize)
+plot(fit.cv.nodesize)
+names(fit.cv.nodesize)
+
+#Number of selected variables: Kopt= 11 
+#AUC of selected variables: OOB-AUCopt= 0.8809265 
+#AUC from cross validation: 0.8556057 
+#Importance Measure: MDG 
+```
+
+The mean AUC from cross-validation is: `0.856` with `11` selected optimal variables.
+
+The optimal variables to use (in order of importance) are: `jerk_quantile.25.`, `jerk_quantile.75.`, `direct_dist`, `attr.turn.v.sd`, `attr.turn.ap.sd`, `attr.turn.al.sd`, `attr.turn.ap.mean`, `max.ap.`, `accel_sd`, `accel_quantile.25.`, and `driver`.
+
+
+######Building Classification Trees
+
+With the selected variables from 1.1 and no constraint on the final node size, a CART is built:
+
+```{r}
+final.model = rpart(isDriver ~ jerk_quantile.25. +
+                      jerk_quantile.75. +
+                      direct_dist +
+                      attr.turn.v.sd +
+                      attr.turn.ap.sd +
+                      attr.turn.al.sd +
+                      attr.turn.ap.mean +
+                      max.ap. +
+                      accel_sd +
+                      accel_quantile.25. +
+                      accel_quantile.75. +
+                      speed_sd +
+                      len +
+                      driver +
+                      path_efficiency,
+                    data = axa.imputed,
+                    control = rpart.control(minbucket = 1))
+
+final.model
+plot(final.model)
+text(final.model)
+
+predicted.classes = predict(final.model, axa.imputed, type = "class")
+
+truth = axa.imputed$isDriver
+classError(predicted.classes, truth) #Error rate of 0.062.
+table(truth, predicted.classes) #37 misclassified observations.
+```
+
+In this first CART, we have `15` variables, no limit on node size, and an error rate of `0.062 (37 misclassified observations)`.
+
+With the selected variables from 1.2 and the constraint on the final nodes containing at least 6 observations, a CART is built:
+
+```{r}
+final.model_nodesize = rpart(isDriver ~ jerk_quantile.25. +
+                               jerk_quantile.75. +
+                               direct_dist +
+                               attr.turn.v.sd +
+                               attr.turn.ap.sd +
+                               attr.turn.al.sd +
+                               attr.turn.ap.mean +
+                               max.ap. +
+                               accel_sd +
+                               accel_quantile.25. +
+                               driver,
+                             data = axa.imputed,
+                             control = rpart.control(minbucket = 6))
+
+final.model_nodesize
+plot(final.model_nodesize)
+text(final.model_nodesize)
+
+predicted.classes_nodesize = predict(final.model_nodesize, axa.imputed, type = "class")
+
+classError(predicted.classes_nodesize, truth) #Error rate of 0.118.
+table(truth, predicted.classes_nodesize) #71 misclassified observations.
+```
+
+In this second CART, we have `11` variables, a minimum node size of `6`, and an error rate of `0.118 (71 misclassified observations)`.
+
+
+#####2.1) Random Forests Excluding the "driver" Variable.
+
+In order to generalize our model to new drivers that were not necessarily included within our data set, we must build a model that does not include the `driver` variable. Thus, we test the AUC with a random forest that is built while excluding this variable entirely:
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit_wo_driver = AUCRF(isDriver ~ .,
+                      ntree = 1000, #Generating 1,000 trees in this Random Forest.
+                      data = axa.imputed[, -82]) #Excluding the "driver" variable.
+
+saveRDS(fit_wo_driver,"Models/fit_wo_driver.rds")
+fit_wo_driver = readRDS("Models/fit_wo_driver.rds")
+
+summary(fit_wo_driver)
+plot(fit_wo_driver)
+names(fit_wo_driver)
+
+#Number of selected variables: Kopt= 15 
+#AUC of selected variables: OOB-AUCopt= 0.8359108 
+#Importance Measure: MDG 
+```
+
+The AUC using the selected variables is `0.836` with a total of `15` predictors; when we exclude the `driver` variable, the complexity of our model increases, and the AUC decreases.
+
+We proceed with cross-validation:
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit.cv_wo_driver = AUCRFcv(fit_wo_driver,
+                           nCV = 10, ###Number of folds.
+                           M = 10) ###Number of CV repetitions.
+
+saveRDS(fit.cv_wo_driver,"Models/fit.cv_wo_driver.rds")
+fit.cv_wo_driver = readRDS("Models/fit.cv_wo_driver.rds")
+
+summary(fit.cv_wo_driver)
+plot(fit.cv_wo_driver)
+names(fit.cv_wo_driver)
+
+#Number of selected variables: Kopt= 15 
+#AUC of selected variables: OOB-AUCopt= 0.8359108 
+#AUC from cross validation: 0.8119352 
+#Importance Measure: MDG 
+```
+
+The mean AUC from cross-validation is: `0.812` with `15` selected optimal variables.
+
+The optimal variables to use (in order of importance) are: `jerk_quantile.25.`, `jerk_quantile.75.`, `direct_dist`, `attr.turn.v.sd`, `attr.turn.ap.mean`, `attr.turn.ap.sd`, `attr.turn.al.sd`, `max.ap.`, `accel_quantile.25.`, `accel_sd`, `speed_sd`, `jerk_sd`, `len`, `accel_quantile.75.`, and `path_efficiency`.
+
+
+#####2.2) Random Forests Excluding the "driver" Variable & Limiting Node Size.
+
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit_wo_driver_nodesize = AUCRF(isDriver ~ .,
+                               ntree = 1000, #Generating 1,000 trees in this Random Forest.
+                               nodesize = 6, #Setting the minimum size of the terminal nodes.
+                               data = axa.imputed[, -82]) #Excluding the "driver" variable.
+
+saveRDS(fit_wo_driver_nodesize,"Models/fit_wo_driver_nodesize.rds")
+fit_wo_driver_nodesize = readRDS("Models/fit_wo_driver_nodesize.rds")
+
+summary(fit_wo_driver_nodesize)
+plot(fit_wo_driver_nodesize)
+names(fit_wo_driver_nodesize)
+
+#Number of selected variables: Kopt= 19 
+#AUC of selected variables: OOB-AUCopt= 0.8295925 
+#Importance Measure: MDG 
+```
+
+The AUC using the selected variables is `0.830` with a total of `19` predictors; when we exclude the `driver` variable, the complexity of our model increases, and the AUC decreases.
+
+We proceed with cross-validation:
+
+```{r, eval = FALSE}
+set.seed(12345)
+fit.cv_wo_driver_nodesize = AUCRFcv(fit_wo_driver_nodesize,
+                                    nCV = 10, ###Number of folds.
+                                    M = 10) ###Number of CV repetitions.
+
+saveRDS(fit.cv_wo_driver_nodesize,"Models/fit.cv_wo_driver_nodesize.rds")
+fit.cv_wo_driver_nodesize = readRDS("Models/fit.cv_wo_driver_nodesize.rds")
+
+summary(fit.cv_wo_driver_nodesize)
+plot(fit.cv_wo_driver_nodesize)
+names(fit.cv_wo_driver_nodesize)
+
+#Number of selected variables: Kopt= 19 
+#AUC of selected variables: OOB-AUCopt= 0.8295925 
+#AUC from cross validation: 0.8089404 
+#Importance Measure: MDG 
+```
+
+The mean AUC from cross-validation is: `0.809` with `19` selected optimal variables.
+
+The optimal variables to use (in order of importance) are: `jerk_quantile.25.`, `jerk_quantile.75.`, `attr.turn.v.sd`, `direct_dist`, `attr.turn.al.sd`, `attr.turn.ap.sd`, `attr.turn.ap.mean`, `max.ap.`, `accel_quantile.25.`, `accel_sd`, `speed_sd`, `accel_quantile.75.`, `jerk_sd`, `len`, `path_efficiency`, `attr.ed2.mean`, `dist`, `speed_quantile.100.`, and `attr.turn.al.mean`.
+
+
+######Building Classification Trees Without "Driver"
+
+With the selected variables from 2.1 and no constraint on the final node size, a CART is built:
+
+```{r}
+final.model_wo_driver = rpart(isDriver ~ jerk_quantile.25. +
+                                jerk_quantile.75. +
+                                direct_dist +
+                                attr.turn.v.sd +
+                                attr.turn.ap.mean +
+                                attr.turn.ap.sd +
+                                attr.turn.al.sd +
+                                max.ap. +
+                                accel_quantile.25. +
+                                accel_sd +
+                                speed_sd +
+                                jerk_sd +
+                                len +
+                                accel_quantile.75. +
+                                path_efficiency,
+                              data = axa.imputed,
+                              control = rpart.control(minbucket = 1))
+
+final.model_wo_driver
+plot(final.model_wo_driver)
+text(final.model_wo_driver)
+
+predicted.classes_wo_driver = predict(final.model_wo_driver, axa.imputed, type = "class")
+
+classError(predicted.classes_wo_driver, truth) #Error rate of 0.058.
+table(truth, predicted.classes_wo_driver) #35 misclassified observations.
+```
+
+In this third CART, we have `15` variables, no limit on node size, and an error rate of `0.058 (35 misclassified observations)`.
+
+With the selected variables from 2.2 and the constraint on the final nodes containing at least 6 observations, a CART is built:
+
+```{r}
+final.model_wo_driver_nodesize = rpart(isDriver ~ jerk_quantile.25. +
+                                         jerk_quantile.75. +
+                                         attr.turn.v.sd +
+                                         direct_dist +
+                                         attr.turn.al.sd +
+                                         attr.turn.ap.sd +
+                                         attr.turn.ap.mean +
+                                         max.ap. +
+                                         accel_quantile.25. +
+                                         accel_sd +
+                                         speed_sd +
+                                         accel_quantile.75. +
+                                         jerk_sd +
+                                         len +
+                                         path_efficiency +
+                                         attr.ed2.mean +
+                                         dist +
+                                         speed_quantile.100. +
+                                         attr.turn.al.mean,
+                                       data = axa.imputed,
+                                       control = rpart.control(minbucket = 6))
+
+final.model_wo_driver_nodesize
+plot(final.model_wo_driver_nodesize)
+text(final.model_wo_driver_nodesize)
+
+predicted.classes_wo_driver_nodesize = predict(final.model_wo_driver_nodesize, axa.imputed, type = "class")
+
+classError(predicted.classes_wo_driver_nodesize, truth) #Error rate of 0.113.
+table(truth, predicted.classes_wo_driver_nodesize) #68 misclassified observations.
+```
+
+In this fourth CART, we have `19` variables, a minimum node size of `6`, and an error rate of `0.113 (68 misclassified observations)`.
+
+
+###Conclusions & Future Work
+
+We compare our four main models below:
+
+- Random Forests Using the "driver" Variable:  
+- Includes "driver" Variable: `Yes`  
+- Minimum Node Size: `1`  
+- AUC Optimal: `0.8836782`  
+- AUC CV: `0.8563156`  
+- Variables: `15`  
+- Error: `0.062 (37 misclassified observations)`  
+
+- Random Forests Using the "driver" Variable & Limiting Node Size.  
+- Includes "driver" Variable: `Yes`  
+- Minimum Node Size: `6`  
+- AUC Optimal: `0.8809265`  
+- AUC CV: `0.8556057`  
+- Variables: `11`  
+- Error: `0.118 (71 misclassified observations)`  
+
+- Random Forests Excluding the "driver" Variable.  
+- Includes "driver" Variable: `No`  
+- Minimum Node Size: `1`  
+- AUC Optimal: `0.8359108`  
+- AUC CV: `0.8119352`  
+- Variables: `15`  
+- Error: `0.058 (35 misclassified observations)`  
+
+- Random Forests Excluding the "driver" Variable & Limiting Node Size.  
+- Includes "driver" Variable: `No`  
+- Minimum Node Size: `6`  
+- AUC Optimal: `0.8295925`  
+- AUC CV: `0.8089404`  
+- Variables: `19`  
+- Error: `0.113 (68 misclassified observations)`  
+
+For future work, it would be desirable to explore the effects of continuing to modify the minimum node size tuning parameter. We would also like to see if there is a simpler model that may use fewer variables while still providing sufficient and comparable accuracy to the models reported above.

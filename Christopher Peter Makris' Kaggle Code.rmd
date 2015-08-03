@@ -1,21 +1,31 @@
-```{r}
+---
+title: "Kaggle Axa Project"
+author: "Alejandra Jaimes, Alex Singal, Christopher Peter Makris, Dani Ismail"
+date: "July 2015"
+output: html_document
+---
+
+
+
+```{r echo=TRUE, results='hide',message=FALSE}
 library(ggplot2)
+library(GGally)
+library(corrplot)
 ```
 
-```{r}
-load("small_axa.RData")
 
+###Loading Data
+```{r}
+load("Data/small_axa.RData")
+```
+
+### Data preparation
+Preparing data frame by converting variables to numeric. 
+```{r}
 dim(axa) #600 Observations, 88 Variables
 names(axa)
 sapply(axa, class)
 table(sapply(axa, class)) #Characters need to be converted to numeric type.
-
-sum(is.na(axa)) #3,375 missing values.
-na.list = as.data.frame(sapply(axa, function(x) { sum(is.na(x)) })) #Focused in certain variables.
-na.list$variable = rownames(na.list)
-colnames(na.list) = c("sum.na","variable")
-rownames(na.list) <- NULL
-na.list[order(na.list$sum.na, decreasing = TRUE), ]
 
 ###Converting character variables to numeric variables.
 converted.columns = sapply(axa[, 2:87], as.numeric)
@@ -31,10 +41,23 @@ axa = axa.converted
 remove(axa.converted)
 ```
 
-### Data Exploration 
+### Data Exploration
+
 ```{r}
 summary(axa)
 ```
+
+
+Checking for NA values. 
+```{r}
+sum(is.na(axa)) #3,375 missing values.
+na.list = as.data.frame(sapply(axa, function(x) { sum(is.na(x)) })) #Focused in certain variables.
+na.list$variable = rownames(na.list)
+colnames(na.list) = c("sum.na","variable")
+rownames(na.list) <- NULL
+na.list[order(na.list$sum.na, decreasing = TRUE), ]
+```
+
 
 Creating boxplots split by driver type and response.
 ```{r}
@@ -48,28 +71,235 @@ for (i in 2:88) {
           geom_boxplot() + ggtitle(i)                   
     boxplot_list[[i]] = p
     }
-boxplot_list
+boxplot_list [[79]]
 ```
 
-Variables Showing Separation
-interest = c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85)
+Creating plot
+```{r, eval = FALSE} 
+#change eval = TRUE to create this plot. It requires a lot of computation.
+axa2 = axa
+axa2$isDriver = as.factor(axa2$isDriver)
+ggpairs(data=axa2[,c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85,88)], color ="isDriver" )
+```
 
+
+From the boxplots, variable `r  colnames(axa[79])` show high variances when comparing different drivers and the reponse. 
+
+However this variable has 552/600 empty values. Since we consider this can be a variable that could predict the reponse. We decided to impute ths variable and check if we can use it in our model. 
+
+Checking the correlation with variable 79 (`r  colnames(axa[79])`) and selecting the max and min correlations. 
+```{r}
+correlation_axa = cor(axa[,79] , axa[,2:87] , use = "pairwise.complete.obs")
+cor_axa_t = t(correlation_axa)
+which.min(cor_axa_t[-78,])
+cor_axa_t[2,]
+which.max(cor_axa_t[-78,])
+cor_axa_t[3,]
+
+```
+The variables with the highest correaltions are: `accel_quantile.0.` and `accel_quantile.100.`. 
+
+We picked variable `accel_quantile.0.` with the highest correlation with variable 79.
+
+Using linear regression to impute the values. 
+
+First model using variable accel.quantile.0 variable to predict attr.hv.sd 
+```{r}
+model = lm(attr.hv.sd ~ accel_quantile.0., data = axa)
+summary(model)
+par(mfrow=c(2, 2))
+plot(model)
+
+par(mfrow=c(1, 1))
+plot(axa$accel_quantile.0., axa$attr.hv.sd)
+abline(model, col = "red3", lwd = 2)
+```
+From the fitted vs residuals values plot it can be seen that the plot shows a pattern. 
+
+Checking for transformations:
+
+```{r}
+library(MASS)
+bc = boxcox(model)
+which(bc$y == max(bc$y))
+bc$x[54]
+```
+The boxcox plot shows that we can apply a transformation to remove the pattern. 
+
+Transforming the data taking the max point of the boxcox transformation, and using it for a new model:
+
+```{r}
+transformed = axa$attr.hv.sd^bc$x[54]
+hist(transformed, prob = TRUE)
+lines(density(transformed, na.rm = TRUE), col = "red3", lwd = 2)
+qqnorm(transformed)
+qqline(transformed)
+shapiro.test(transformed)
+
+model2 = lm(transformed ~ accel_quantile.0., data = axa)
+
+par(mfrow=c(2, 2))
+plot(model2)
+
+par(mfrow=c(1, 1))
+col.vec = rep(1, nrow(axa))
+col.vec[305] = "red3"
+plot(transformed ~ axa$accel_quantile.0., col = col.vec, pch = 16)
+abline(model2, col = "red3", lwd = 2)
+```
+From model2, a leverage point (observation 305) is analyzed.
+
+In the following model the levarage point is removed from the imputing model.
+
+
+```{r}
+acceleration = axa$accel_quantile.0.[-305]
+
+
+model3 = lm(transformed[-305] ~ acceleration, data = axa)
+par(mfrow=c(2, 2))
+plot(model3)
+
+par(mfrow=c(1, 1))
+plot(acceleration, transformed[-305])
+abline(model3, col = "red3", lwd = 2)
+abline(model2, col = "blue", lwd = 2, lty = 2)
+
+summary(model3)
+```
+The R-squared value after removing the levarage improved from `r summary(model2)$adj.r.squared` to `r summary(model3)$adj.r.squared`
+
+Model3 is now used to impute the missing values.
+
+```{r}
+input = axa$accel_quantile.0.[is.na(axa$attr.hv.sd)] #Selecting predictor values with attr.hv.sd = NA. 
+
+index = which(is.na(axa$attr.hv.sd)) 
+imputed.values = predict(model3,  newdata = data.frame(acceleration=input))
+
+axa$attr.hv.sd.imputed = axa$attr.hv.sd^bc$x[54]
+axa[index,"attr.hv.sd.imputed"]  = imputed.values
+```
+
+
+``` {r}
+base.logistic = glm(isDriver ~ attr.hv.sd.imputed + driver, family = "binomial", data = axa)
+summary(base.logistic)
+
+ggplot(data = axa, aes_string(x = "driver",
+                              y = "attr.hv.sd.imputed",
+                              fill = "isDriver")) +
+  geom_boxplot()
+
+ggplot(data = axa, aes_string(x = "driver",
+                              y = "attr.hv.sd.imputed",
+                              fill = "isDriver")) +
+  geom_boxplot() +
+  ylim(1, 1.1)
+
+length(which(base.logistic$fitted.values >= .5))
 
 library(VIM)
-imputed = kNN(axa, k = 5)
+axa.knn = kNN(axa)
+axa.imputed = axa.knn[, 1:90]
 
-plot(imputed$attr.hv.sd, imputed$accel_quantile.0.)
+axa.numbers = axa.imputed[,-c(1, 88, 89)]
 
-ggplot(data=imputed,aes_string(x=var_list[[89]], y=var_list[[79]], fill = var_list[[88]])) +
-geom_boxplot()
+pca = prcomp(axa.numbers, center = TRUE, scale = TRUE)
+summary(pca)
 
-cor.vec = "dummy"
+plot(pca, npcs = 87, type = "lines", ylim = c(0, 15))
 
-for (i in 2:87) {
-cor.vec[i] = cor(axa[, 79], axa[, i], use = "pairwise.complete.obs")
-} 
+variances = pca$sdev^2
+total.variance = sum(variances)
+prop.variance = variances/total.variance
+plot(prop.variance)
 
-par(mfrow=c(1,2))
-plot(axa[,3], axa[,79])
-plot(axa[,4], axa[,79])
+par(mfrow = c(2, 5))
+for (i in 1:10) {
+  plot(pca$rotation[, i])
+abline(h = 0, lty = 2)
+}
 
+test = glm(isDriver ~ . - driver_trip, family = "binomial", data = axa.imputed)
+summary(test)
+
+
+
+axa.new = axa[, -c(1, 74:79, 90)]
+axa.knn = kNN(axa.new)
+axa.imputed = axa.knn[, 1:82]
+
+base = glm(isDriver ~ 1, data = axa.imputed)
+saturated = lm(isDriver ~ ., data = axa.imputed)
+scope = list(lower = formula(base), upper = formula(saturated))
+
+forward = step(base, scope, direction = "forward")
+backward = step(saturated, scope, direction = "backward")
+both.base = step(base, scope, direction = "both")
+both.saturated = step(saturated, scope, direction = "both")
+
+AIC(forward, backward, both.base, both.saturated)
+BIC(forward, backward, both.base, both.saturated)
+
+summary(both.base)
+library(car)
+vif(both.base)
+
+manual.model = glm(isDriver ~ jerk_quantile.25. + accel_quantile.25. + angle_mean + angle_change + jerk_quantile.100. + attr.turn.ap.mean + attr.turn.ap.sd + angle_quantile.100. + direct_dist + dist + jerk_quantile.50., family = "binomial", data = axa.imputed)
+
+
+pca = prcomp(axa.imputed[,-c(81, 82)], center = TRUE, scale = TRUE)
+summary(pca)
+
+plot(pca, npcs = 87, type = "lines", ylim = c(0, 15))
+
+variances = pca$sdev^2
+total.variance = sum(variances)
+prop.variance = variances/total.variance
+plot(prop.variance)
+
+par(mfrow = c(2, 5))
+for (i in 1:10) {
+  plot(pca$rotation[, i])
+abline(h = 0, lty = 2)
+}
+
+pca1 = pca$x[, 1]
+pca2 = pca$x[, 2]
+pca3 = pca$x[, 3]
+pca4 = pca$x[, 4]
+pca5 = pca$x[, 5]
+
+pca.model = glm(axa.imputed$isDriver ~ pca1 + pca2 + pca3 + pca4 + pca5, family = "binomial")
+
+test = glm(isDriver ~ attr.hv.sd + driver, family = "binomial", data = axa)
+
+```
+
+```{r}
+library(randomForest)
+
+model = randomForest(as.factor(isDriver) ~ .,
+                     ntree = 1000,
+                     data = axa.imputed)
+model
+
+output = predict(model, axa.imputed[, -81], type = "response")
+output
+
+table(output, axa.imputed$isDriver)
+
+library(caret)
+ctrl = trainControl(method = "repeatedcv",
+                     number = 10, repeats = 10)
+grid_rf = expand.grid(.mtry = 10)
+m_rf = train(as.factor(isDriver) ~ .,
+             data = axa.imputed,
+             method = "rf",
+             metric = "rocc", #####Kappa???
+             trControl = ctrl,
+             tuneGrid = grid_rf)
+m_rf
+
+```

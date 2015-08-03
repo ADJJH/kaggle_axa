@@ -101,3 +101,8 @@ table(truth, predicted.classes)
 
 misclass = classError(predicted.classes, truth)$misclassified
 predict(final.model, axa.binary[, -1], type = "prob")[misclass]
+
+
+
+test = aov(axa$attr.hv.sd ~ axa$driver)
+test2 = aov(axa.imputed$attr.hv.sd ~ axa.imputed$driver)
