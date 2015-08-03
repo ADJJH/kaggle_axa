@@ -599,36 +599,36 @@ In this fourth CART, we have `19` variables, a minimum node size of `6`, and an 
 
 We compare our four main models below:
 
--Random Forests Using the "driver" Variable:
-  -Includes "driver" Variable: `Yes`
-  -Minimum Node Size: `1`
-  -AUC Optimal: `0.8836782`
-  -AUC CV: `0.8563156`
-  -Variables: `15`
-  -Accuracy: `0.062 (37 misclassified observations)`
+- Random Forests Using the "driver" Variable:  
+- Includes "driver" Variable: `Yes`  
+- Minimum Node Size: `1`  
+- AUC Optimal: `0.8836782`  
+- AUC CV: `0.8563156`  
+- Variables: `15`  
+- Error: `0.062 (37 misclassified observations)`  
 
--Random Forests Using the "driver" Variable & Limiting Node Size.
-  -Includes "driver" Variable: `Yes`
-  -Minimum Node Size: `6`
-  -AUC Optimal: `0.8809265`
-  -AUC CV: `0.8556057`
-  -Variables: `11`
-  -Accuracy: `0.118 (71 misclassified observations)`
-  
--Random Forests Excluding the "driver" Variable.
-  -Includes "driver" Variable: `No`
-  -Minimum Node Size: `1`
-  -AUC Optimal: `0.8359108`
-  -AUC CV: `0.8119352`
-  -Variables: `15`
-  -Accuracy: `0.058 (35 misclassified observations)`
-  
--Random Forests Excluding the "driver" Variable & Limiting Node Size.
-  -Includes "driver" Variable: `No`
-  -Minimum Node Size: `6`
-  -AUC Optimal: `0.8295925`
-  -AUC CV: `0.8089404`
-  -Variables: `19`
-  -Accuracy: `0.113 (68 misclassified observations)`
-  
+- Random Forests Using the "driver" Variable & Limiting Node Size.  
+- Includes "driver" Variable: `Yes`  
+- Minimum Node Size: `6`  
+- AUC Optimal: `0.8809265`  
+- AUC CV: `0.8556057`  
+- Variables: `11`  
+- Error: `0.118 (71 misclassified observations)`  
+
+- Random Forests Excluding the "driver" Variable.  
+- Includes "driver" Variable: `No`  
+- Minimum Node Size: `1`  
+- AUC Optimal: `0.8359108`  
+- AUC CV: `0.8119352`  
+- Variables: `15`  
+- Error: `0.058 (35 misclassified observations)`  
+
+- Random Forests Excluding the "driver" Variable & Limiting Node Size.  
+- Includes "driver" Variable: `No`  
+- Minimum Node Size: `6`  
+- AUC Optimal: `0.8295925`  
+- AUC CV: `0.8089404`  
+- Variables: `19`  
+- Error: `0.113 (68 misclassified observations)`  
+
 For future work, it would be desirable to explore the effects of continuing to modify the minimum node size tuning parameter. We would also like to see if there is a simpler model that may use fewer variables while still providing sufficient and comparable accuracy to the models reported above.
