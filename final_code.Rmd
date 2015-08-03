@@ -382,7 +382,7 @@ Testing the AUC if driver variable is not used, so the model can be used with ne
 set.seed(12345) 
 fit_wo_driver_nodesize= AUCRF(isDriver ~ .,
             ntree = 1000,
-            data = axa.imputed[-82],
+            data = axa.imputed[,-82],
             nodesize = 7) #AUC 0.83 - 15Kopt, 
 
 saveRDS(fit_wo_driver_nodesize,"Models/fit_wo_driver_nodesize.rds")
