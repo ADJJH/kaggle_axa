@@ -100,6 +100,15 @@ for (i in 2:88) {
   boxplot_list[[i]] = p
 }
 boxplot_list[[79]]
+
+ggplot(data = axa, aes_string(x = var_list[[89]],
+                              y = var_list[[79]],
+                              fill = var_list[[88]])) +
+  geom_boxplot() +
+  ggtitle("Highway Velocity Standard Deviation\nby Driver Type & Driver Truth\n") +
+  xlab("\nDriver ID") +
+  ylab("Attribute: High Velocity Standard Deviation\n") +
+  theme_bw()
 ```
 
 Creating a bivariate scatterplot matrix:
@@ -108,7 +117,7 @@ Creating a bivariate scatterplot matrix:
 #change eval = TRUE to create this plot. It requires a lot of computation.
 axa2 = axa
 axa2$isDriver = as.factor(axa2$isDriver)
-ggpairs(data = axa2[ , c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85,88)], color ="isDriver" )
+ggpairs(data = axa2[ , c(3, 4, 5, 7, 8, 18, 23, 24, 28, 32, 34, 48, 74, 75, 76, 77, 78, 79, 84, 85, 88)], color ="isDriver" )
 ```
 
 From the boxplots, variable `attr.hv.sd` shows high group separation when comparing different drivers and the reponse.
@@ -128,6 +137,14 @@ The variables with the highest correlations are: `accel_quantile.0.` and `accel_
 
 We picked variable `accel_quantile.0.` as it displays the highest absolute value correlation with the variable `attr.hv.sd`; the correlation is quite strong at approximately '-0.814'.
 
+```{r}
+ggplot(axa, aes(x = accel_quantile.0., y = attr.hv.sd)) +
+  geom_point() +
+  ggtitle("Highway Velocity Standard Deviation\nVS First Acceleration Quantile\n") +
+  xlab("\nFirst Acceleration Quantile") +
+  ylab("Attribute: High Velocity Standard Deviation\n") +
+  theme_bw()
+```
 
 ###Data Transformation - Imputing Missing Values
 
@@ -148,6 +165,7 @@ par(mfrow = c(1, 1))
 bc = boxcox(model)
 which(bc$y == max(bc$y))
 bc$x[54]
+title("Proposed Box-Cox Transformation")
 ```
 
 The Box-Cox plot shows that we can apply a transformation to remove the pattern. 
@@ -203,8 +221,11 @@ The imputation ended up smoothing out the variability originally observed in the
 ggplot(data = axa, aes(x = driver,
                        y = attr.hv.sd.imputed,
                        fill = isDriver)) + 
-  geom_boxplot() + 
-  ggtitle("Boxplot of Imputed Variable: attr.hv.sd.imputed")
+  geom_boxplot() +
+  ggtitle("Imputed Highway Velocity Standard Deviation\nby Driver Type & Driver Truth\n") +
+  xlab("\nDriver ID") +
+  ylab("Attribute: High Velocity Standard Deviation\n") +
+  theme_bw()
 
 aov_prior = aov(axa$attr.hv.sd ~ axa$driver + axa$isDriver)
 summary(aov_prior) #Significant predictor before imputation.
@@ -632,3 +653,27 @@ We compare our four main models below:
 - Error: `0.113 (68 misclassified observations)`  
 
 For future work, it would be desirable to explore the effects of continuing to modify the minimum node size tuning parameter. We would also like to see if there is a simpler model that may use fewer variables while still providing sufficient and comparable accuracy to the models reported above.
+
+
+```{r}
+fit_wo_driver_nodesize_7 = readRDS("Models/fit_wo_driver_nodesize_7.rds")
+
+summary(fit_wo_driver_nodesize_7)
+plot(fit_wo_driver_nodesize_7)
+names(fit_wo_driver_nodesize_7)
+
+#Number of selected variables: Kopt= 19 
+#AUC of selected variables: OOB-AUCopt= 0.8295925 
+#Importance Measure: MDG 
+
+fit.cv_wo_driver_nodesize_7 = readRDS("Models/fit.cv_wo_driver_nodesize_7.rds")
+
+summary(fit.cv_wo_driver_nodesize_7)
+plot(fit.cv_wo_driver_nodesize_7)
+names(fit.cv_wo_driver_nodesize_7)
+
+#Number of selected variables: Kopt= 19 
+#AUC of selected variables: OOB-AUCopt= 0.8295925 
+#AUC from cross validation: 0.8089404 
+#Importance Measure: MDG 
+```
